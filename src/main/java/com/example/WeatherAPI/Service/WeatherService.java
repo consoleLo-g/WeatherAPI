@@ -1,32 +1,62 @@
-// package com.example.WeatherAPI.Service;
+package com.example.WeatherAPI.Service;
 
-// import java.util.Map;
+import com.example.WeatherAPI.Model.WeatherResponse;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+import org.json.JSONObject;
+import org.json.JSONArray;
 
-// import org.springframework.stereotype.Service;
-// import org.springframework.web.client.RestTemplate;
+@Service
+public class WeatherService {
 
-// import com.example.WeatherAPI.Model.WaetherResponse;
+    public WeatherResponse getWeather(double latitude, double longitude) {
+        RestTemplate restTemplate = new RestTemplate();
 
-// @Service
-// public class WeatherService {
-// private final RestTemplate restTemplate = new RestTemplate();
-// private final String apiKey = "YOUR_API_KEY";
+        try {
+            // Step 1: Reverse geocode to get city and country
+            String geoUrl = String.format(
+                    "https://api-bdc.io/data/reverse-geocode-client?latitude=%f&longitude=%f&localityLanguage=en",
+                    latitude, longitude);
+            String geoResponse = restTemplate.getForObject(geoUrl, String.class);
+            JSONObject geoJson = new JSONObject(geoResponse);
 
-// public WaetherResponse getWeather(String city) {
-// String url = "https://api.openweathermap.org/data/2.5/weather?q="
-// + city + "&appid=" + apiKey + "&units=metric";
-// Map<String, Object> response = restTemplate.getForObject(url, Map.class);
+            String city = geoJson.optString("city", "Unknown");
+            String country = geoJson.optString("countryName", "Unknown");
 
-// WaetherResponse weather = new WaetherResponse();
-// weather.setCity(city);
-// Map<String, Object> main = (Map<String, Object>) response.get("main");
-// weather.setTemperature((Double) main.get("temp"));
-// weather.setHumidity((Double) main.get("humidity"));
+            // Step 2: Fetch complete weather data (current + hourly + daily forecast)
+            String weatherUrl = String.format(
+                    "https://api.open-meteo.com/v1/forecast?latitude=%f&longitude=%f"
+                            + "&current_weather=true"
+                            + "&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,cloud_cover,visibility,windspeed_10m"
+                            + "&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset,uv_index_max"
+                            + "&timezone=auto",
+                    latitude, longitude);
+            String weatherResponse = restTemplate.getForObject(weatherUrl, String.class);
+            JSONObject weatherJson = new JSONObject(weatherResponse);
 
-// Map<String, Object> weatherDetails = ((List<Map<String, Object>>)
-// response.get("weather")).get(0);
-// weather.setDescription((String) weatherDetails.get("description"));
+            // Current weather
+            JSONObject current = weatherJson.getJSONObject("current_weather");
 
-// return weather;
-// }
-// }
+            // Hourly and daily data
+            JSONObject hourly = weatherJson.getJSONObject("hourly");
+            JSONObject daily = weatherJson.getJSONObject("daily");
+
+            // Step 3: Build WeatherResponse
+            WeatherResponse weather = new WeatherResponse();
+            weather.setCity(city);
+            weather.setCountry(country);
+            weather.setLatitude(latitude);
+            weather.setLongitude(longitude);
+            weather.setTemperature(current.getDouble("temperature"));
+            weather.setWindspeed(current.getDouble("windspeed"));
+            weather.setTime(current.getString("time"));
+            weather.setHourly(hourly.toString());
+            weather.setDaily(daily.toString());
+
+            return weather;
+
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to fetch weather data: " + e.getMessage());
+        }
+    }
+}
