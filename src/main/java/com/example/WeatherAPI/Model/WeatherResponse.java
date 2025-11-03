@@ -1,15 +1,15 @@
 package com.example.WeatherAPI.Model;
 
+import java.util.List;
+
 public class WeatherResponse {
     private String city;
     private String country;
     private double latitude;
     private double longitude;
-    private double temperature;
-    private double windspeed;
-    private String time;
-    private String hourly; // JSON string
-    private String daily; // JSON string
+    private CurrentWeather current;
+    private List<HourlyWeather> hourly;
+    private List<DailyWeather> daily;
 
     // Getters and setters
     public String getCity() {
@@ -44,43 +44,27 @@ public class WeatherResponse {
         this.longitude = longitude;
     }
 
-    public double getTemperature() {
-        return temperature;
+    public CurrentWeather getCurrent() {
+        return current;
     }
 
-    public void setTemperature(double temperature) {
-        this.temperature = temperature;
+    public void setCurrent(CurrentWeather current) {
+        this.current = current;
     }
 
-    public double getWindspeed() {
-        return windspeed;
-    }
-
-    public void setWindspeed(double windspeed) {
-        this.windspeed = windspeed;
-    }
-
-    public String getTime() {
-        return time;
-    }
-
-    public void setTime(String time) {
-        this.time = time;
-    }
-
-    public String getHourly() {
+    public List<HourlyWeather> getHourly() {
         return hourly;
     }
 
-    public void setHourly(String hourly) {
+    public void setHourly(List<HourlyWeather> hourly) {
         this.hourly = hourly;
     }
 
-    public String getDaily() {
+    public List<DailyWeather> getDaily() {
         return daily;
     }
 
-    public void setDaily(String daily) {
+    public void setDaily(List<DailyWeather> daily) {
         this.daily = daily;
     }
 }
