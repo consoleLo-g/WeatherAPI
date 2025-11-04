@@ -1,0 +1,42 @@
+# ============================
+# 1) Build Stage
+# ============================
+FROM maven:3.9.6-eclipse-temurin-21 AS build
+
+# Set working directory
+WORKDIR /app
+
+# Copy pom.xml and download dependencies (layer caching)
+COPY pom.xml .
+COPY mvnw .
+COPY .mvn .mvn
+
+RUN chmod +x mvnw
+RUN ./mvnw dependency:go-offline -B
+
+# Copy the entire project
+COPY src ./src
+
+# Package the application
+RUN ./mvnw clean package -DskipTests
+
+# ============================
+# 2) Run Stage (Final Image)
+# ============================
+FROM eclipse-temurin:21-jdk-jammy
+
+WORKDIR /app
+
+# Copy only the final JAR from build stage
+COPY --from=build /app/target/*.jar app.jar
+
+# Expose application port
+EXPOSE 8080
+
+# ENV variables (Render will override)
+ENV WEATHER_API_URL1=""
+ENV WEATHER_API_URL2=""
+ENV SPRING_PROFILES_ACTIVE=prod
+
+# Start the Spring Boot app
+ENTRYPOINT ["java", "-jar", "app.jar"]
