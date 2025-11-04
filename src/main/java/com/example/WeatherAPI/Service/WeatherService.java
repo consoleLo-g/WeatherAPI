@@ -5,6 +5,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.json.JSONObject;
 import org.json.JSONArray;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -12,19 +14,31 @@ import java.util.List;
 @Service
 public class WeatherService {
 
+    private static final Logger logger = LoggerFactory.getLogger(WeatherService.class);
+
     public WeatherResponse getWeather(double latitude, double longitude) {
         RestTemplate restTemplate = new RestTemplate();
 
         try {
+            logger.info("Fetching weather data for coordinates: latitude={}, longitude={}", latitude, longitude);
+
             // Step 1: Reverse geocode to get city and country
             String geoUrl = String.format(
                     "https://api-bdc.io/data/reverse-geocode-client?latitude=%f&longitude=%f&localityLanguage=en",
                     latitude, longitude);
-            String geoResponse = restTemplate.getForObject(geoUrl, String.class);
-            JSONObject geoJson = new JSONObject(geoResponse);
+            logger.debug("Reverse geocoding URL: {}", geoUrl);
 
+            String geoResponse = restTemplate.getForObject(geoUrl, String.class);
+            if (geoResponse == null) {
+                logger.error("Empty response received from reverse geocode API");
+                throw new RuntimeException("Empty response from reverse geocode API");
+            }
+
+            JSONObject geoJson = new JSONObject(geoResponse);
             String city = geoJson.optString("city", "Unknown");
             String country = geoJson.optString("countryName", "Unknown");
+
+            logger.info("Resolved location: City='{}', Country='{}'", city, country);
 
             // Step 2: Fetch complete weather data (current + hourly + daily forecast)
             String weatherUrl = String.format(
@@ -35,8 +49,16 @@ public class WeatherService {
                             + "&timezone=auto",
                     latitude, longitude);
 
+            logger.debug("Weather API URL: {}", weatherUrl);
+
             String weatherResponse = restTemplate.getForObject(weatherUrl, String.class);
+            if (weatherResponse == null) {
+                logger.error("Empty response received from weather API");
+                throw new RuntimeException("Empty response from weather API");
+            }
+
             JSONObject weatherJson = new JSONObject(weatherResponse);
+            logger.info("Successfully fetched weather JSON data.");
 
             // Current weather
             JSONObject current = weatherJson.getJSONObject("current_weather");
@@ -52,6 +74,8 @@ public class WeatherService {
             currentWeather.setWinddirection(current.getDouble("winddirection"));
             currentWeather.setWeathercode(current.getInt("weathercode"));
             currentWeather.setTime(current.getString("time"));
+
+            logger.debug("Parsed current weather: {}", currentWeather);
 
             // Parse hourly data
             JSONArray hourlyTimes = hourly.getJSONArray("time");
@@ -77,6 +101,8 @@ public class WeatherService {
                 hourlyList.add(h);
             }
 
+            logger.debug("Parsed {} hourly weather entries.", hourlyList.size());
+
             // Parse daily data
             JSONArray dailyTimes = daily.getJSONArray("time");
             JSONArray maxTemp = daily.getJSONArray("temperature_2m_max");
@@ -99,6 +125,8 @@ public class WeatherService {
                 dailyList.add(d);
             }
 
+            logger.debug("Parsed {} daily weather entries.", dailyList.size());
+
             // Step 3: Build WeatherResponse
             WeatherResponse weather = new WeatherResponse();
             weather.setCity(city);
@@ -109,9 +137,12 @@ public class WeatherService {
             weather.setHourly(hourlyList);
             weather.setDaily(dailyList);
 
+            logger.info("Weather data successfully built for {} ({})", city, country);
+
             return weather;
 
         } catch (Exception e) {
+            logger.error("Failed to fetch or process weather data: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to fetch weather data: " + e.getMessage());
         }
     }
