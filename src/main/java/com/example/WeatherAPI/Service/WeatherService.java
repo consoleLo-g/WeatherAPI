@@ -5,6 +5,7 @@ import com.example.WeatherAPI.ExcepctionHandeling.BadRequestException;
 import com.example.WeatherAPI.ExcepctionHandeling.ResourceNotFoundException;
 import com.example.WeatherAPI.ExcepctionHandeling.InternalServerException;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
@@ -21,34 +22,40 @@ public class WeatherService {
 
     private static final Logger logger = LoggerFactory.getLogger(WeatherService.class);
 
+    @Value("${weather.api.url1}")
+    private String reverseGeoBaseUrl;
+
+    @Value("${weather.api.url2}")
+    private String weatherApiBaseUrl;
+
     public WeatherResponse getWeather(double latitude, double longitude) {
         RestTemplate restTemplate = new RestTemplate();
 
         try {
-            // 🧭 Validate input
+            // 🧭 Step 1: Validate coordinates
             if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-                logger.warn("Invalid latitude or longitude: lat={}, lon={}", latitude, longitude);
+                logger.warn("Invalid coordinates: lat={}, lon={}", latitude, longitude);
                 throw new BadRequestException("Invalid latitude or longitude values.");
             }
 
-            logger.info("Fetching weather data for coordinates: latitude={}, longitude={}", latitude, longitude);
+            logger.info("Fetching weather data for latitude={}, longitude={}", latitude, longitude);
 
-            // 🌍 Step 1: Reverse geocode to get city and country
+            // 🌍 Step 2: Reverse geocode (Get city and country)
             String geoUrl = String.format(
-                    "https://api-bdc.io/data/reverse-geocode-client?latitude=%f&longitude=%f&localityLanguage=en",
-                    latitude, longitude);
+                    "%s?latitude=%f&longitude=%f&localityLanguage=en",
+                    reverseGeoBaseUrl, latitude, longitude);
+
             logger.debug("Reverse geocoding URL: {}", geoUrl);
 
             String geoResponse;
             try {
                 geoResponse = restTemplate.getForObject(geoUrl, String.class);
             } catch (RestClientException e) {
-                logger.error("Reverse geocoding API call failed: {}", e.getMessage());
+                logger.error("Failed reverse-geocode API call: {}", e.getMessage());
                 throw new InternalServerException("Failed to connect to reverse geocoding service.");
             }
 
             if (geoResponse == null || geoResponse.isEmpty()) {
-                logger.error("Empty response from reverse geocode API");
                 throw new InternalServerException("Empty response from reverse geocode API.");
             }
 
@@ -57,20 +64,21 @@ public class WeatherService {
             String country = geoJson.optString("countryName", "");
 
             if (city.isEmpty()) {
-                logger.warn("City not found for coordinates: lat={}, lon={}", latitude, longitude);
+                logger.warn("City not found for lat={}, lon={}", latitude, longitude);
                 throw new ResourceNotFoundException("City not found for the given coordinates.");
             }
 
             logger.info("Resolved location: City='{}', Country='{}'", city, country);
 
-            // ☁️ Step 2: Fetch weather data (current + hourly + daily)
+            // ☁️ Step 3: Fetch weather forecast
             String weatherUrl = String.format(
-                    "https://api.open-meteo.com/v1/forecast?latitude=%f&longitude=%f"
+                    "%s?latitude=%f&longitude=%f"
                             + "&current_weather=true"
                             + "&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,cloud_cover,visibility,windspeed_10m"
                             + "&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset,uv_index_max"
                             + "&timezone=auto",
-                    latitude, longitude);
+                    weatherApiBaseUrl, latitude, longitude);
+
             logger.debug("Weather API URL: {}", weatherUrl);
 
             String weatherResponse;
@@ -82,29 +90,19 @@ public class WeatherService {
             }
 
             if (weatherResponse == null || weatherResponse.isEmpty()) {
-                logger.error("Empty response from weather API");
                 throw new InternalServerException("Empty response from weather API.");
             }
 
             JSONObject weatherJson = new JSONObject(weatherResponse);
-            logger.info("Successfully fetched weather JSON data.");
+            logger.info("Weather JSON data fetched successfully.");
 
-            // 🌡️ Current weather
+            // 🌡️ Parse current weather
             if (!weatherJson.has("current_weather")) {
-                throw new ResourceNotFoundException("Current weather data not available for the given location.");
+                throw new ResourceNotFoundException("Current weather data not available.");
             }
 
             JSONObject current = weatherJson.getJSONObject("current_weather");
 
-            // ☀️ Hourly and daily data
-            JSONObject hourly = weatherJson.optJSONObject("hourly");
-            JSONObject daily = weatherJson.optJSONObject("daily");
-
-            if (hourly == null || daily == null) {
-                throw new ResourceNotFoundException("Hourly or daily forecast data not found.");
-            }
-
-            // Build current weather object
             CurrentWeather currentWeather = new CurrentWeather();
             currentWeather.setTemperature(current.getDouble("temperature"));
             currentWeather.setWindspeed(current.getDouble("windspeed"));
@@ -112,11 +110,13 @@ public class WeatherService {
             currentWeather.setWeathercode(current.getInt("weathercode"));
             currentWeather.setTime(current.getString("time"));
 
-            logger.debug("Parsed current weather: {}", currentWeather);
-
             // 🌤️ Parse hourly data
+            JSONObject hourly = weatherJson.optJSONObject("hourly");
+            if (hourly == null)
+                throw new ResourceNotFoundException("Hourly weather data missing.");
+
             List<HourlyWeather> hourlyList = new ArrayList<>();
-            JSONArray hourlyTimes = hourly.getJSONArray("time");
+            JSONArray times = hourly.getJSONArray("time");
             JSONArray temps = hourly.getJSONArray("temperature_2m");
             JSONArray humidity = hourly.getJSONArray("relative_humidity_2m");
             JSONArray feelsLike = hourly.getJSONArray("apparent_temperature");
@@ -125,9 +125,9 @@ public class WeatherService {
             JSONArray wind = hourly.getJSONArray("windspeed_10m");
             JSONArray vis = hourly.getJSONArray("visibility");
 
-            for (int i = 0; i < hourlyTimes.length(); i++) {
+            for (int i = 0; i < times.length(); i++) {
                 HourlyWeather h = new HourlyWeather();
-                h.setTime(hourlyTimes.getString(i));
+                h.setTime(times.getString(i));
                 h.setTemperature(temps.getDouble(i));
                 h.setHumidity(humidity.getDouble(i));
                 h.setApparentTemperature(feelsLike.getDouble(i));
@@ -138,9 +138,11 @@ public class WeatherService {
                 hourlyList.add(h);
             }
 
-            logger.debug("Parsed {} hourly weather entries.", hourlyList.size());
-
             // 🌅 Parse daily data
+            JSONObject daily = weatherJson.optJSONObject("daily");
+            if (daily == null)
+                throw new ResourceNotFoundException("Daily weather data missing.");
+
             List<DailyWeather> dailyList = new ArrayList<>();
             JSONArray dailyTimes = daily.getJSONArray("time");
             JSONArray maxTemp = daily.getJSONArray("temperature_2m_max");
@@ -162,9 +164,7 @@ public class WeatherService {
                 dailyList.add(d);
             }
 
-            logger.debug("Parsed {} daily weather entries.", dailyList.size());
-
-            // 🌎 Step 3: Build final WeatherResponse
+            // 🧩 Final combined response
             WeatherResponse weather = new WeatherResponse();
             weather.setCity(city);
             weather.setCountry(country);
@@ -179,10 +179,10 @@ public class WeatherService {
 
         } catch (BadRequestException | ResourceNotFoundException | InternalServerException e) {
             logger.warn("Handled exception: {}", e.getMessage());
-            throw e; // Let GlobalExceptionHandler handle it
+            throw e;
         } catch (Exception e) {
-            logger.error("Unexpected error occurred: {}", e.getMessage(), e);
-            throw new InternalServerException("Unexpected internal error occurred while fetching weather data.");
+            logger.error("Unexpected error: {}", e.getMessage(), e);
+            throw new InternalServerException("Unexpected error occurred while fetching weather data.");
         }
     }
 }
